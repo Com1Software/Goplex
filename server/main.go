@@ -1,111 +1,565 @@
 package main
 
 import (
-	"bufio"
-	"encoding/xml"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"time"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 
 	"fmt"
+	"os"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
+	asciistring "github.com/Com1Software/Go-ASCII-String-Package"
+	"github.com/Com1Software/go-dbase/dbase"
+	"golang.org/x/text/encoding/charmap"
 )
+
+type Tags struct {
+	Tag string `dbase:"TAG"`
+}
 
 // ----------------------------------------------------------------
 func main() {
-	agent := SSE()
+	fmt.Println("Video Web Server")
+	fmt.Printf("Operating System : %s\n", runtime.GOOS)
 	xip := fmt.Sprintf("%s", GetOutboundIP())
 	port := "8080"
-	a := app.New()
-	w := a.NewWindow("Listening on " + xip + ":" + port)
-	tctl := 0
-	tc := 0
-	memo := widget.NewEntry()
-	memo.SetPlaceHolder("Enter an IP address to sync with...")
-	memo.MultiLine = true               // Enable multiline for larger text fields
-	memo.Resize(fyne.NewSize(400, 100)) // Adjust the height (4x the default)
+	exefile := ""
+	exefilea := ""
 
-	memo1 := widget.NewEntry()
-	memo1.SetPlaceHolder("...")
-	memo1.MultiLine = true               // Enable multiline for larger text fields
-	memo1.Resize(fyne.NewSize(400, 100)) // Adjust the height (4x the default)
+	drive := "c"
+	wdir := "/tmp/"
+	switch runtime.GOOS {
+	case "windows":
+		exefile = "/ffmpeg/bin/ffmpeg.exe"
+		exefilea = "/ffmpeg/bin/ffprobe.exe"
+		wdir = "/dwhelper/"
 
-	input := widget.NewEntry()
-	input.SetPlaceHolder("Enter Command...")
+	case "linux":
+		exefile = "ffmpeg"
+		exefilea = "ffprobe"
+		wdir = "/media/dave/Elements/dwhelper/"
 
-	inputvalue := widget.NewEntry()
-	inputvalue.SetPlaceHolder("Enter Value...")
+	}
 
-	button := widget.NewButton("Cmd", func() {
-	})
+	pgsize := 10
+	maxsel := 1000
+	display := 0
+	subdir := true
+	switch {
+	//-------------------------------------------------------------
+	case len(os.Args) == 2:
 
-	helloButton := widget.NewButton("Connect", func() {
-		url := memo.Text
-		go func() {
-			for {
-				data := ReadURL(url)
+		fmt.Println("Not")
 
-				// Use fyne.Do to safely update the UI from a goroutine
-				fyne.Do(func() {
-					memo1.SetText(data)
+		//-------------------------------------------------------------
+	default:
+
+		fmt.Println("Server running....")
+		fmt.Println("Listening on " + xip + ":" + port)
+
+		fmt.Println("")
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			xdata := InitPage(xip)
+			fmt.Fprint(w, xdata)
+		})
+		//------------------------------------------------ About Page Handler
+		http.HandleFunc("/about", func(w http.ResponseWriter, r *http.Request) {
+			xdata := AboutPage(xip)
+			fmt.Fprint(w, xdata)
+		})
+		//------------------------------------------------Dymnamic Display Page Handler
+		http.HandleFunc("/display", func(w http.ResponseWriter, r *http.Request) {
+			page := r.URL.Query().Get("page")
+			sdir := r.URL.Query().Get("sdir")
+			xdata := DisplayPage(subdir, xip, port, page, sdir, exefile, exefilea, drive, wdir, pgsize, maxsel, display)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------Play Video Page Handler
+		http.HandleFunc("/playvideo", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			sdir := r.URL.Query().Get("sdir")
+			xdata := PlayVideoPage(xip, port, video, exefile, exefilea, drive, wdir, sdir)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------Move Video Page Handler
+		http.HandleFunc("/movevideo", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			sdir := r.URL.Query().Get("sdir")
+			xdata := MoveVideoPage(xip, port, video, exefile, exefilea, drive, wdir, sdir, subdir)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------Move Video Page Handler
+		http.HandleFunc("/movevideocomplete", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			sdir := r.URL.Query().Get("sdir")
+			ddir := r.URL.Query().Get("ddir")
+			xdata := MoveVideoCompletePage(xip, port, video, exefile, exefilea, drive, wdir, sdir, ddir)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Tag Page Handler
+		http.HandleFunc("/tags", func(w http.ResponseWriter, r *http.Request) {
+			xdata := TagsPage(xip)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Tag Edit Page Handler
+		http.HandleFunc("/tagedit", func(w http.ResponseWriter, r *http.Request) {
+			recno := r.URL.Query().Get("recno")
+			xdata := EditTagPage(xip, recno)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		http.HandleFunc("/addtag", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.FormValue("map")
+			fmt.Println(tag)
+			if len(tag) > 0 {
+				table, err := dbase.OpenTable(&dbase.Config{
+					Filename:   "TAGS.DBF",
+					TrimSpaces: true,
+					WriteLock:  true,
 				})
+				if err != nil {
+					panic(err)
+				}
+				defer table.Close()
+				row, err := table.Row()
+				if err != nil {
+					panic(err)
+				}
+				p := Tags{
+					Tag: tag,
+				}
 
-				time.Sleep(1 * time.Second) // Adjust the refresh rate as needed
+				row, err = table.RowFromStruct(p)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(row)
+				err = row.FieldByName("TAG").SetValue(tag)
+				if err != nil {
+					panic(err)
+				}
+				err = row.Write()
+				if err != nil {
+					panic(err)
+				}
 			}
-		}()
+			xdata := TagsPage(xip)
+			fmt.Fprint(w, xdata)
 
-	})
-	exitButton := widget.NewButton("Exit", func() {
-		os.Exit(0)
-	})
+		})
+		http.HandleFunc("/updatetag", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.FormValue("tag")
+			rn := r.FormValue("recno")
+			xdata := TagUpdatePage(xip, rn, tag)
+			fmt.Fprint(w, xdata)
 
-	inputContainer := container.NewGridWrap(fyne.NewSize(165, 40), input)
-	inputContainerValue := container.NewGridWrap(fyne.NewSize(165, 40), inputvalue)
-	buttonContainer := container.NewGridWrap(fyne.NewSize(50, 40), button)
-	layoutContainer := container.NewHBox(buttonContainer, inputContainer, inputContainerValue)
+		})
 
-	w.SetContent(container.NewVBox(
-		memo,            // Add the memo field
-		memo1,           // Add the second memo field
-		layoutContainer, // Add the input field and button
-		helloButton,     // Add the "Say Hello" button
-		exitButton,      // Add the "Exit" button
-	))
-	w.Resize(fyne.NewSize(400, 300))
+		//------------------------------------------------ Tag Video Page Handler
+		http.HandleFunc("/tagvideo", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			page := r.URL.Query().Get("page")
+			sdir := r.URL.Query().Get("sdir")
+			xdata := TagVideoPage(xip, port, video, exefile, exefilea, drive, wdir, sdir, page)
+			fmt.Fprint(w, xdata)
 
-	go func() {
-		for {
-			switch {
-			case tctl == 0:
-				time.Sleep(time.Second * 1)
-			case tctl == 1:
-				time.Sleep(time.Second * -1)
-				tc++
-				fmt.Printf("loop count = %d\n", tc)
+		})
+
+		//------------------------------------------------ Tag Video Page Handler
+		http.HandleFunc("/selecttag", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			sdir := r.URL.Query().Get("sdir")
+			page := r.URL.Query().Get("page")
+			xdata := SelectTagPage(xip, port, video, exefile, exefilea, drive, wdir, sdir, page)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Tag Video Page Handler
+		http.HandleFunc("/selectcomplete", func(w http.ResponseWriter, r *http.Request) {
+			video := r.URL.Query().Get("video")
+			sdir := r.URL.Query().Get("sdir")
+			page := r.URL.Query().Get("page")
+			tag := r.URL.Query().Get("tag")
+			fmt.Println(tag)
+			if len(tag) > 0 {
+				table, err := dbase.OpenTable(&dbase.Config{
+					Filename:   "VIDEOS.DBF",
+					TrimSpaces: true,
+					WriteLock:  true,
+				})
+				if err != nil {
+					panic(err)
+				}
+				defer table.Close()
+				nr := table.Header().RecordsCount()
+				row, err := table.Row()
+				if err != nil {
+					panic(err)
+				}
+				p := Tags{
+					Tag: tag,
+				}
+
+				row, err = table.RowFromStruct(p)
+				if err != nil {
+					panic(err)
+				}
+				err = row.FieldByName("TAG").SetValue(tag)
+				if err != nil {
+					panic(err)
+				}
+				err = row.FieldByName("VIDEO").SetValue(video)
+				if err != nil {
+					panic(err)
+				}
+				err = row.FieldByName("FOLDER").SetValue(sdir)
+				if err != nil {
+					panic(err)
+				}
+
+				err = row.FieldByName("RECORD").SetValue(int32(nr))
+				if err != nil {
+					panic(err)
+				}
+
+				err = row.Write()
+				if err != nil {
+					panic(err)
+				}
 			}
-			dtime := fmt.Sprintf("%s", time.Now())
-			msg := "<message>"
-			msg = msg + "<controller>" + fmt.Sprint(GetOutboundIP()) + "</controller>"
-			msg = msg + "<date_time>" + dtime[0:24] + "</date_time>"
-			msg = msg + "<command>" + fmt.Sprintf("%s", input.Text) + "</command>"
-			msg = msg + "<value>" + fmt.Sprintf("%s", inputvalue.Text) + "</value>"
+			xdata := TagVideoPage(xip, port, video, exefile, exefilea, drive, wdir, sdir, page)
+			fmt.Fprint(w, xdata)
 
-			msg = msg + "/<message>\n"
-			event := msg
-			//		event := fmt.Sprintf("Controller=%s Time=%v\n", GetOutboundIP(), dtime[0:24])
-			agent.Notifier <- []byte(event)
+		})
+
+		//------------------------------------------------ Video Tag Edit Page Handler
+		http.HandleFunc("/videotagedit", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.URL.Query().Get("tag")
+			video := r.URL.Query().Get("video")
+			recno := r.URL.Query().Get("recno")
+			rated := r.URL.Query().Get("rated")
+			xdata := VideoTagEditPage(xip, video, tag, recno, rated)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Search Page Handler
+		http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+			xdata := SearchPage(xip)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		http.HandleFunc("/findvideo", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.FormValue("map")
+			fmt.Println(tag)
+			xdata := SearchResultsPage(xip, tag)
+			fmt.Fprint(w, xdata)
+		})
+		//------------------------------------------- Video Search Page Handler
+		http.HandleFunc("/videosearch", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.URL.Query().Get("map")
+			fmt.Println(tag)
+			fmt.Println("test")
+			//		xdata := SearchPage(xip)
+			//		fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Categories Page Handler
+		http.HandleFunc("/categories", func(w http.ResponseWriter, r *http.Request) {
+			xdata := CategoriesPage(xip)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------ Category Display Page Handler
+		http.HandleFunc("/categorydisplay", func(w http.ResponseWriter, r *http.Request) {
+			tag := r.URL.Query().Get("tag")
+			xdata := CategoryDisplayPage(xip, exefile, exefilea, tag, wdir)
+			fmt.Fprint(w, xdata)
+
+		})
+
+		//------------------------------------------------- Static Handler Handler
+		fs := http.FileServer(http.Dir("static/"))
+		http.Handle("/static/", http.StripPrefix("/static/", fs))
+		//------------------------------------------------- Start Server
+		TableCheck()
+		Openbrowser(xip + ":" + port)
+		if err := http.ListenAndServe(xip+":"+port, nil); err != nil {
+			panic(err)
 		}
-	}()
-	go fmt.Printf("Listening at  : %s Port : %s\n", xip, port)
-	go http.ListenAndServe(":"+port, agent)
+	}
+}
 
-	w.ShowAndRun()
+// Openbrowser : Opens default web browser to specified url
+func Openbrowser(url string) error {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start msedge"}
+
+	case "linux":
+		cmd = "chromium-browser"
+		args = []string{""}
+
+	case "darwin":
+		cmd = "open"
+	default:
+		cmd = "xdg-open"
+	}
+	args = append(args, url)
+	return exec.Command(cmd, args...).Start()
+}
+
+func TableCheck() {
+	tt := "TAGS.DBF"
+	vtf := "VIDEOS.DBF"
+
+	if _, err := os.Stat(tt); err == nil {
+
+	} else {
+
+		file, err := dbase.NewTable(
+			dbase.FoxProAutoincrement,
+			&dbase.Config{
+				Filename:   tt,
+				Converter:  dbase.NewDefaultConverter(charmap.Windows1250),
+				TrimSpaces: true,
+			},
+			tcolumns(),
+			64,
+			nil,
+		)
+		if err != nil {
+			panic(err)
+		}
+		defer file.Close()
+
+		row, err := file.RowFromStruct(&Tags{
+			Tag: "TAG",
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		err = row.Add()
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf(
+			"Last modified: %v Columns count: %v Record count: %v File size: %v \n",
+			file.Header().Modified(0),
+			file.Header().ColumnsCount(),
+			file.Header().RecordsCount(),
+			file.Header().FileSize(),
+		)
+
+	}
+	if _, err := os.Stat(vtf); err == nil {
+
+	} else {
+
+		file, err := dbase.NewTable(
+			dbase.FoxProVar,
+			&dbase.Config{
+				Filename:   vtf,
+				Converter:  dbase.NewDefaultConverter(charmap.Windows1250),
+				TrimSpaces: true,
+			},
+			vcolumns(),
+			64,
+			nil,
+		)
+		if err != nil {
+			panic(err)
+		}
+		defer file.Close()
+
+		row, err := file.RowFromStruct(&Tags{
+			Tag: "TAG",
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		err = row.Add()
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf(
+			"Last modified: %v Columns count: %v Record count: %v File size: %v \n",
+			file.Header().Modified(0),
+			file.Header().ColumnsCount(),
+			file.Header().RecordsCount(),
+			file.Header().FileSize(),
+		)
+
+	}
+
+}
+
+func tcolumns() []*dbase.Column {
+
+	tagCol, err := dbase.NewColumn("TAG", dbase.Varchar, 80, 0, false)
+	if err != nil {
+		panic(err)
+	}
+	return []*dbase.Column{
+		tagCol,
+	}
+}
+
+func vcolumns() []*dbase.Column {
+
+	tagCol, err := dbase.NewColumn("Tag", dbase.Varchar, 80, 0, false)
+	videoCol, err := dbase.NewColumn("Video", dbase.Varchar, 254, 0, false)
+	folderCol, err := dbase.NewColumn("Folder", dbase.Varchar, 254, 0, false)
+	ratedCol, err := dbase.NewColumn("Rated", dbase.Integer, 2, 0, false)
+	recposCol, err := dbase.NewColumn("Record", dbase.Integer, 10, 0, false)
+
+	if err != nil {
+		panic(err)
+	}
+	return []*dbase.Column{
+		tagCol,
+		videoCol,
+		folderCol,
+		ratedCol,
+		recposCol,
+	}
+}
+
+func DateTimeDisplay(xdata string) string {
+	//------------------------------------------------------------------------
+	xdata = xdata + "<script>"
+	xdata = xdata + "function startTime() {"
+	xdata = xdata + "  var today = new Date();"
+	xdata = xdata + "  var d = today.getDay();"
+	xdata = xdata + "  var h = today.getHours();"
+	xdata = xdata + "  var m = today.getMinutes();"
+	xdata = xdata + "  var s = today.getSeconds();"
+	xdata = xdata + "  var ampm = h >= 12 ? 'pm' : 'am';"
+	xdata = xdata + "  var mo = today.getMonth();"
+	xdata = xdata + "  var dm = today.getDate();"
+	xdata = xdata + "  var yr = today.getFullYear();"
+	xdata = xdata + "  m = checkTimeMS(m);"
+	xdata = xdata + "  s = checkTimeMS(s);"
+	xdata = xdata + "  h = checkTimeH(h);"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  switch (d) {"
+	xdata = xdata + "    case 0:"
+	xdata = xdata + "       day = 'Sunday';"
+	xdata = xdata + "    break;"
+	xdata = xdata + "    case 1:"
+	xdata = xdata + "    day = 'Monday';"
+	xdata = xdata + "        break;"
+	xdata = xdata + "    case 2:"
+	xdata = xdata + "        day = 'Tuesday';"
+	xdata = xdata + "        break;"
+	xdata = xdata + "    case 3:"
+	xdata = xdata + "        day = 'Wednesday';"
+	xdata = xdata + "        break;"
+	xdata = xdata + "    case 4:"
+	xdata = xdata + "        day = 'Thursday';"
+	xdata = xdata + "        break;"
+	xdata = xdata + "    case 5:"
+	xdata = xdata + "        day = 'Friday';"
+	xdata = xdata + "        break;"
+	xdata = xdata + "    case 6:"
+	xdata = xdata + "        day = 'Saturday';"
+	xdata = xdata + "}"
+	//------------------------------------------------------------------------------------
+	xdata = xdata + "  switch (mo) {"
+	xdata = xdata + "    case 0:"
+	xdata = xdata + "       month = 'January';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 1:"
+	xdata = xdata + "       month = 'Febuary';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 2:"
+	xdata = xdata + "       month = 'March';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 3:"
+	xdata = xdata + "       month = 'April';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 4:"
+	xdata = xdata + "       month = 'May';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 5:"
+	xdata = xdata + "       month = 'June';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 6:"
+	xdata = xdata + "       month = 'July';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 7:"
+	xdata = xdata + "       month = 'August';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 8:"
+	xdata = xdata + "       month = 'September';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 9:"
+	xdata = xdata + "       month = 'October';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 10:"
+	xdata = xdata + "       month = 'November';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "    case 11:"
+	xdata = xdata + "       month = 'December';"
+	xdata = xdata + "       break;"
+	xdata = xdata + "}"
+	//  -------------------------------------------------------------------
+	xdata = xdata + "  document.getElementById('txtdt').innerHTML = day+', '+month+' '+dm+', '+yr+' - '+h + ':' + m + ':' + s+' '+ampm;"
+
+	xdata = xdata + "  var t = setTimeout(startTime, 500);"
+	xdata = xdata + "}"
+	//----------
+	xdata = xdata + "function checkTimeMS(i) {"
+	xdata = xdata + "  if (i < 10) {i = '0' + i};"
+	xdata = xdata + "  return i;"
+	xdata = xdata + "}"
+	//----------
+	xdata = xdata + "function checkTimeH(i) {"
+	xdata = xdata + "  if (i > 12) {i = i -12};"
+	xdata = xdata + "  return i;"
+	xdata = xdata + "}"
+	xdata = xdata + "</script>"
+	return xdata
+
+}
+func LoopDisplay(xdata string) string {
+	//------------------------------------------------------------------------
+	xdata = xdata + "<script>"
+	xdata = xdata + "function startLoop() {"
+	//  -------------------------------------------------------------------
+	xdata = xdata + "  document.getElementById('txtloop').innerHTML = Math.random();"
+	xdata = xdata + "  var t = setTimeout(startLoop, 500);"
+	xdata = xdata + "}"
+	xdata = xdata + "</script>"
+	return xdata
 
 }
 
@@ -121,92 +575,1748 @@ func GetOutboundIP() net.IP {
 	return localAddr.IP
 }
 
-type message struct {
-	Controller string `xml:"controller"`
-	DateTime   string `xml:"date_time"`
-	Command    string `xml:"command"`
-	Value      string `xml:"value"`
+func fileNameWithoutExtension(fileName string) string {
+	return strings.TrimSuffix(fileName, filepath.Ext(fileName))
 }
-
-func ReadURL(url string) string {
-	msg := &message{}
-	resp, err := http.Get(url)
+func copy(src, dst string) (int64, error) {
+	sourceFileStat, err := os.Stat(src)
 	if err != nil {
-		log.Fatal(err)
+		return 0, err
 	}
-	defer resp.Body.Close()
-	reader := bufio.NewReader(resp.Body)
 
-	for {
-		line, erra := reader.ReadBytes('\n')
-		if erra != nil {
-			log.Fatal(erra) // Ensure correct error logging
+	if !sourceFileStat.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", src)
+	}
+
+	source, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer destination.Close()
+	nBytes, err := io.Copy(destination, source)
+	return nBytes, err
+}
+
+func fixFileName(fileName string) string {
+	newName := ""
+	chr := ""
+	ascval := 0
+
+	for x := 0; x < len(fileName); x++ {
+		chr = fileName[x : x+1]
+		ascval = asciistring.StringToASCII(chr)
+		switch {
+		case ascval < 45:
+		case ascval == 64:
+		case ascval == 92:
+		case ascval == 96:
+		case ascval > 122:
+		default:
+			newName = newName + chr
 		}
-		xml.Unmarshal(line, &msg)
-		break // Exit after the first read
 	}
 
-	// Construct the string with extracted values
-	return msg.Controller + " " + msg.DateTime + " " + msg.Command + " " + msg.Value
-}
-
-type Agent struct {
-	Notifier    chan []byte
-	newuser     chan chan []byte
-	closinguser chan chan []byte
-	user        map[chan []byte]bool
-}
-
-func SSE() (agent *Agent) {
-	agent = &Agent{
-		Notifier:    make(chan []byte, 1),
-		newuser:     make(chan chan []byte),
-		closinguser: make(chan chan []byte),
-		user:        make(map[chan []byte]bool),
+	err := os.Rename(fileName, newName)
+	if err != nil {
+		fmt.Println("Error renaming file:", err)
 	}
-	go agent.listen()
-	return
+	return newName
 }
 
-func (agent *Agent) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	flusher, ok := rw.(http.Flusher)
-	if !ok {
-		http.Error(rw, "Error ", http.StatusInternalServerError)
-		return
+func ValidFileType(fileExt string) bool {
+	rtn := false
+	switch {
+	case fileExt == ".mp4":
+		rtn = true
+	case fileExt == ".avi":
+		rtn = true
+	case fileExt == ".wmv":
+		rtn = true
+	case fileExt == ".asf":
+		rtn = true
 	}
-	rw.Header().Set("Content-Type", "text/event-stream")
-	rw.Header().Set("Cache-Control", "no-cache")
-	rw.Header().Set("Connection", "keep-alive")
-	rw.Header().Set("Access-Control-Allow-Origin", "*")
-	mChan := make(chan []byte)
-	agent.newuser <- mChan
-	defer func() {
-		agent.closinguser <- mChan
-	}()
-	notify := req.Context().Done()
-	go func() {
-		<-notify
-		agent.closinguser <- mChan
-	}()
-	for {
-		fmt.Fprintf(rw, "%s", <-mChan)
-		flusher.Flush()
-	}
-
+	return rtn
 }
 
-func (agent *Agent) listen() {
-	for {
-		select {
-		case s := <-agent.newuser:
-			agent.user[s] = true
-		case s := <-agent.closinguser:
-			delete(agent.user, s)
-		case event := <-agent.Notifier:
-			for userMChan, _ := range agent.user {
-				userMChan <- event
+func ParseFrameRate(data string) string {
+	rtn := ""
+	chr := ""
+	do := false
+	pass := 1
+	v1 := ""
+	v2 := ""
+	add := true
+	ascval := 0
+	for x := 0; x < len(data); x++ {
+		chr = data[x : x+1]
+		add = true
+		ascval = asciistring.StringToASCII(chr)
+		if ascval == 13 {
+			add = false
+			numerator, _ := strconv.Atoi(v1)
+			denominator, _ := strconv.Atoi(v2)
+			if denominator > 0 {
+				fps := numerator / denominator
+				rtn = strconv.Itoa(fps)
+			}
+		}
+		if ascval == 10 {
+			add = false
+			pass = 1
+			do = false
+		}
+		if chr == "," {
+			do = true
+			add = false
+		}
+		if chr == "/" {
+			pass = 2
+			add = false
+		}
+		if do {
+			if add {
+				if pass == 1 {
+					v1 = v1 + chr
+				}
+				if pass == 2 {
+					v2 = v2 + chr
+				}
 			}
 		}
 	}
+	return rtn
+}
 
+func ParseBitRate(data string) string {
+	rtn := ""
+	chr := ""
+	do := false
+	add := true
+	pass := 1
+	ascval := 0
+	for x := 0; x < len(data); x++ {
+		chr = data[x : x+1]
+		add = true
+		ascval = asciistring.StringToASCII(chr)
+		if ascval == 13 {
+			add = false
+		}
+		if ascval == 10 {
+			add = false
+			do = false
+			pass = 2
+		}
+		if chr == "," {
+			do = true
+			add = false
+		}
+		if do {
+			if add {
+				if pass == 2 {
+					rtn = rtn + chr
+				}
+			}
+		}
+	}
+	return rtn
+}
+
+func FileData(exefilea string, tnfile string, fileName string) string {
+	xdata := ""
+	bfile := ""
+	switch runtime.GOOS {
+	case "windows":
+		bfile = "tmp.bat"
+	case "linux":
+		bfile = "tmp.sh"
+
+	}
+
+	bdata := []byte(exefilea + " -i " + tnfile + " -show_entries stream=width,height -of csv=" + fmt.Sprintf("%q", "p=0") + ">tmp.csv")
+	err := os.WriteFile(bfile, bdata, 0777)
+	if runtime.GOOS == "linux" {
+		bfile = "./" + bfile
+	}
+	cmd := exec.Command(bfile)
+	if err = cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	dat := []byte("")
+	dat, err = os.ReadFile("tmp.csv")
+	tdata := string(dat)
+	tmp := strings.Split(tdata, ",")
+	xdata = xdata + "Frame width " + tmp[0] + "<BR>"
+	xdata = xdata + "Frame height " + tmp[1] + "<BR>"
+
+	//-------------------------------------------------------------------------------------------------
+	bdata = []byte(exefilea + " -i " + tnfile + " -show_entries format=duration -v quiet -of csv >tmp.csv")
+	err = os.WriteFile(bfile, bdata, 0644)
+	cmd = exec.Command(bfile)
+	if err = cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	dat = []byte("")
+	dat, err = os.ReadFile("tmp.csv")
+	tdata = string(dat)
+	tmp = strings.Split(tdata, ",")
+	tmpa := strings.Split(tmp[1], ".")
+	t := tmpa[0]
+	i, _ := strconv.Atoi(t)
+	mc := 0
+	m := 0
+	sc := 0
+	for x := 0; x < i; x++ {
+		mc++
+		sc++
+		if mc > 59 {
+			m++
+			mc = 0
+			sc = 0
+		}
+
+	}
+	xdata = xdata + "Length  " + strconv.Itoa(m) + ":" + strconv.Itoa(sc) + " <BR>"
+	//-------------------------------------------------------------------------------------------------
+	bdata = []byte(exefilea + " -i " + tnfile + " -show_entries stream=r_frame_rate  -of csv" + ">tmp.csv")
+
+	err = os.WriteFile(bfile, bdata, 0644)
+	cmd = exec.Command(bfile)
+	if err = cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	dat = []byte("")
+	dat, err = os.ReadFile("tmp.csv")
+	tdata = string(dat)
+	fr := ParseFrameRate(tdata)
+	xdata = xdata + "Frames per second  " + fr + " <BR>"
+
+	//-------------------------------------------------------------------------------------------------
+	bdata = []byte(exefilea + " -i " + tnfile + "  -show_entries stream=bit_rate -v quiet -of csv >tmp.csv")
+	err = os.WriteFile(bfile, bdata, 0644)
+	cmd = exec.Command(bfile)
+	if err = cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	dat = []byte("")
+	dat, err = os.ReadFile("tmp.csv")
+	tdata = string(dat)
+	br := ParseBitRate(tdata)
+	xdata = xdata + "Bit Rate " + br + " <BR>"
+	xdata = xdata + "<BR><BR>"
+
+	return xdata
+}
+
+func BasicDisplay(exefile string, exefilea string, tnfile string, fileName string, fc int, pfc int, fn string, xip string, sdir string) string {
+	xdata := ""
+	tp1 := TimePosition(exefilea, tnfile, 1)
+	tp2 := TimePosition(exefilea, tnfile, 2)
+	tp3 := TimePosition(exefilea, tnfile, 3)
+	tp4 := TimePosition(exefilea, tnfile, 4)
+	tp5 := TimePosition(exefilea, tnfile, 5)
+	tp6 := TimePosition(exefilea, tnfile, 6)
+
+	xdata = xdata + "File # " + strconv.Itoa(fc) + "<BR>"
+
+	e := os.Remove("static/" + strconv.Itoa(pfc) + "1.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "2.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "3.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "4.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "5.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "6.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+
+	cmd := exec.Command(exefile, "-ss", tp1, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"1.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+
+	cmd = exec.Command(exefile, "-ss", tp2, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"2.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp3, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"3.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp4, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"4.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp5, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"5.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp6, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"6.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+
+	xdata = xdata + " <A HREF='http://" + xip + ":8080/playvideo?video=" + fn + "&sdir=" + sdir + "'>  [ " + fn + " ] <BR> <IMG SRC=static/" + strconv.Itoa(pfc) + "1.png ALT=test123> <IMG SRC=static/" + strconv.Itoa(pfc) + "2.png  ALT=xerror> <IMG SRC=static/" + strconv.Itoa(pfc) + "3.png  ALT=error> <IMG SRC=static/" + strconv.Itoa(pfc) + "4.png  ALT=error><IMG SRC=static/" + strconv.Itoa(pfc) + "5.png  ALT=error> <IMG SRC=static/" + strconv.Itoa(pfc) + "6.png  ALT=error></A><BR> "
+
+	return xdata
+}
+
+func ImageScrollDisplay(exefile string, tnfile string, fileName string, fc int, pfc int, fn string, xip string, sdir string) string {
+	xdata := ""
+
+	e := os.Remove("static/" + strconv.Itoa(pfc) + "1.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "2.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "3.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	cmd := exec.Command(exefile, "-ss", "00:00:01", "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"1.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", "00:00:10", "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"2.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", "00:00:20", "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"3.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	//xdata = xdata + "  <A HREF='file:///" + tnfile + "'>  [ " + fileName + " ] <BR> <IMG SRC=" + fileNameWithoutExtension(tnfile) + "1.png" + "  ALT=error> <IMG SRC=" + fileNameWithoutExtension(tnfile) + "2.png" + "  ALT=error> <IMG SRC=" + fileNameWithoutExtension(tnfile) + "3.png" + "  ALT=error> </A><BR> "
+
+	xdata = xdata + "<div class='scroll-container'>"
+	xdata = xdata + "<img src= " + "static/" + strconv.Itoa(pfc) + "1.png  allt='test' width='600' height='400'>"
+	xdata = xdata + "<img src= " + "static/" + strconv.Itoa(pfc) + "2.png  allt='test' width='600' height='400'>"
+	xdata = xdata + "<img src= " + "static/" + strconv.Itoa(pfc) + "3.png  allt='test' width='600' height='400'>"
+
+	xdata = xdata + "</div>"
+
+	//-------------------------------------------------------------------------------------------------
+	return xdata
+}
+
+func MoveDisplay(exefile string, exefilea string, tnfile string, fileName string, pfc int, fn string, xip string, sdir string) string {
+	xdata := ""
+	tp1 := TimePosition(exefilea, tnfile, 1)
+	tp2 := TimePosition(exefilea, tnfile, 2)
+	tp3 := TimePosition(exefilea, tnfile, 3)
+	tp4 := TimePosition(exefilea, tnfile, 4)
+	tp5 := TimePosition(exefilea, tnfile, 5)
+	tp6 := TimePosition(exefilea, tnfile, 6)
+
+	e := os.Remove("static/" + strconv.Itoa(pfc) + "1.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "2.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "3.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "4.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "5.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	e = os.Remove("static/" + strconv.Itoa(pfc) + "6.png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	cmd := exec.Command(exefile, "-ss", tp1, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"1.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	fmt.Println(tp1)
+	cmd = exec.Command(exefile, "-ss", tp2, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"2.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp3, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"3.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp4, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"4.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp5, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"5.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	cmd = exec.Command(exefile, "-ss", tp6, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"6.png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+
+	xdata = xdata + "  <IMG SRC=static/" + strconv.Itoa(pfc) + "1.png ALT=test123> <IMG SRC=static/" + strconv.Itoa(pfc) + "2.png  ALT=xerror><BR> <IMG SRC=static/" + strconv.Itoa(pfc) + "3.png  ALT=error> <IMG SRC=static/" + strconv.Itoa(pfc) + "4.png  ALT=error><BR><IMG SRC=static/" + strconv.Itoa(pfc) + "5.png  ALT=error> <IMG SRC=static/" + strconv.Itoa(pfc) + "6.png  ALT=error><BR> "
+
+	return xdata
+}
+
+func TimePosition(exefilea string, tnfile string, ctl int) string {
+	xdata := ""
+	bfile := ""
+	switch runtime.GOOS {
+	case "windows":
+		bfile = "tmp.bat"
+	case "linux":
+		bfile = "tmp.sh"
+
+	}
+	//-------------------------------------------------------------------------------------------------
+	bdata := []byte(exefilea + " -i " + tnfile + " -show_entries format=duration -v quiet -of csv >tmp.csv")
+	err := os.WriteFile(bfile, bdata, 0777)
+	if runtime.GOOS == "linux" {
+		bfile = "./" + bfile
+	}
+	cmd := exec.Command(bfile)
+	if err = cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	dat := []byte("")
+	dat, err = os.ReadFile("tmp.csv")
+	tdata := string(dat)
+	tmp := strings.Split(tdata, ",")
+	tmpa := strings.Split(tmp[1], ".")
+	t := tmpa[0]
+	i, _ := strconv.Atoi(t)
+	mc := 0
+	m := 0
+	sc := 0
+	for x := 0; x < i; x++ {
+		mc++
+		sc++
+		if mc > 59 {
+			m++
+			mc = 0
+			sc = 0
+		}
+
+	}
+	if m < 2 {
+		xdata = "00:00:10"
+	} else {
+		if m < 60 {
+			nt := m / 2
+			switch {
+			case ctl == 1:
+				ntt := nt / 2
+				nttt := ntt / 2
+				ntttt := nttt / 2
+				nt = nt - ntt
+				nt = nt - nttt
+				nt = nt - ntttt
+			case ctl == 2:
+				ntt := nt / 2
+				nttt := ntt / 2
+				nt = nt - ntt
+				nt = nt - nttt
+			case ctl == 3:
+				ntt := nt / 2
+				nt = nt - ntt
+			case ctl == 4:
+				ntt := nt / 2
+				nt = nt + ntt
+			case ctl == 5:
+				ntt := nt / 2
+				nttt := ntt / 2
+				nt = nt + ntt
+				nt = nt + nttt
+			case ctl == 6:
+				ntt := nt / 2
+				nttt := ntt / 2
+				ntttt := nttt / 2
+				nt = nt + ntt
+				nt = nt + nttt
+				nt = nt + ntttt
+			}
+			if nt > 9 {
+				xdata = "00:" + strconv.Itoa(nt) + ":00"
+			} else {
+				xdata = "00:0" + strconv.Itoa(nt) + ":00"
+			}
+		} else {
+			xdata = "00:59:00"
+		}
+	}
+
+	return xdata
+}
+
+func CheckforFile(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if os.IsNotExist(err) {
+		return false
+	}
+	return false
+}
+
+func InitPage(xip string) string {
+	//---------------------------------------------------------------------------
+	//----------------------------------------------------------------------------
+	xxip := ""
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Video Web Server</title>"
+	xdata = DateTimeDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+
+	xdata = xdata + "<body>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H1>Video Web Server</H1>"
+	//---------
+	host, _ := os.Hostname()
+	addrs, _ := net.LookupIP(host)
+	for _, addr := range addrs {
+		if ipv4 := addr.To4(); ipv4 != nil {
+			xxip = fmt.Sprintf("%s", ipv4)
+		}
+	}
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<div id='txtdt'></div>"
+
+	xdata = xdata + "Host Port IP : " + xip
+	xdata = xdata + "<BR> Machine IP : " + xxip + "</p>"
+
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/about'> [ About ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=1'> [ Display ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/categories'> [ Categories ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/search'> [ Search ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/tags'> [ Tags ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/static/index.html'> [ Static Index ] </A>  "
+	xdata = xdata + "<BR><BR>Video Web Server"
+
+	//------------------------------------------------------------------------
+
+	xdata = xdata + "</center>"
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func AboutPage(xip string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>About Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: lightblue;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: white;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p {"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<p>Video Web Server</p>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "  <A HREF='https://github.com/Com1Software/Video-Web-Server'> [ Video Web Server GitHub Repository ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+
+	xdata = xdata + "Video Web Server"
+	//------------------------------------------------------------------------
+
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func TagsPage(xip string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Tags Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Tags Table</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "Video Tags"
+	//------------------------------------------------------------------------
+	xdata = xdata + " Cut and Paste Map to Validate<BR><BR>"
+	xdata = xdata + "<form action='/addtag' method='post'>"
+	xdata = xdata + "<textarea id='map' name='map' rows='1' cols='20'></textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<input type='submit' value='Add Tag'/>"
+	xdata = xdata + "</form>"
+	xdata = xdata + "<BR><BR>"
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "TAGS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	recno := 0
+	for !table.EOF() {
+		row, err := table.Next()
+		if err != nil {
+			panic(err)
+		}
+		//field := row.FieldByName("tag")
+		field := row.Field(0)
+		if field == nil {
+			panic("Field not found")
+		}
+		s := fmt.Sprintf("%v", field.GetValue())
+		xdata = xdata + "  <A HREF='http://" + xip + ":8080/tagedit?recno=" + strconv.Itoa(recno) + "'> [ " + s + " ] </A>  "
+		xdata = xdata + "<BR>"
+		recno++
+
+	}
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func EditTagPage(xip string, recno string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Tags Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Edit Tag</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "Video Tags"
+
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "TAGS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	rn, _ := strconv.Atoi(recno)
+	err = table.GoTo(uint32(rn))
+	if err != nil {
+		panic(err)
+	}
+	row, err := table.Row()
+	if err != nil {
+		panic(err)
+	}
+	field := row.Field(0)
+	if field == nil {
+		panic("Field not found")
+	}
+	s := fmt.Sprintf("%v", field.GetValue())
+	//------------------------------------------------------------------------
+	xdata = xdata + " Cut and Paste Map to Validate<BR><BR>"
+	xdata = xdata + "<form action='/updatetag?recno=" + recno + "' method='post'>"
+	xdata = xdata + "<textarea id='tag' name='tag' rows='1' cols='20'>" + s + "</textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<input type='submit' value='Upadte Tag'/>"
+	xdata = xdata + "</form>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<BR>"
+
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func TagUpdatePage(xip string, recno string, tag string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Tag Update</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Tag Update</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "TAGS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	rn, _ := strconv.Atoi(recno)
+	err = table.GoTo(uint32(rn))
+	if err != nil {
+		panic(err)
+	}
+	row, err := table.Row()
+	if err != nil {
+		panic(err)
+	}
+	err = row.FieldByName("TAG").SetValue(tag)
+	if err != nil {
+		xdata = xdata + err.Error()
+	}
+	err = row.Write()
+	if err != nil {
+		xdata = xdata + err.Error()
+
+	}
+	xdata = xdata + "<BR>Complete<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/tags'> [ Return to Tags ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+
+	xdata = xdata + "<BR>"
+
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func DisplayPage(subdir bool, xip string, port string, page string, sdir string, exefile string, exefilea string, drive string, wdir string, pgsize int, maxsel int, display int) string {
+	//---------------------------------------------------------------------------
+	pgselect := ""
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	switch {
+	case display == 1:
+		xdata = xdata + "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+		xdata = xdata + "<style>"
+		xdata = xdata + "div.scroll-container {"
+		xdata = xdata + "background-color: #333;"
+		xdata = xdata + "overflow: auto;"
+		xdata = xdata + "white-space: nowrap;"
+		xdata = xdata + "padding: 10px;"
+		xdata = xdata + "}"
+		xdata = xdata + "div.scroll-container img {"
+		xdata = xdata + "padding: 10px;"
+		xdata = xdata + "}"
+		xdata = xdata + "</style>"
+	}
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H1>Video Display Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	xdata = xdata + "<p2>Video Web Server</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Page " + page + "</p1>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	pg, _ := strconv.Atoi(page)
+	fctl := false
+	nsd := ""
+	switch runtime.GOOS {
+	case "windows":
+		if _, err := os.Stat(exefile); err == nil {
+			nsd = wdir + sdir + "/"
+			fctl = true
+		} else {
+			fmt.Println(err)
+		}
+
+	case "linux":
+		nsd = wdir + sdir + "/"
+		fctl = true
+	}
+	if fctl {
+		files, err := ioutil.ReadDir(nsd)
+		if err != nil {
+
+			log.Fatal(err)
+		}
+
+		fc := 0
+		pfc := 0
+		pgcnt := 0
+		for _, file := range files {
+			//fmt.Println(file.Name())
+			if ValidFileType(strings.ToLower(path.Ext(file.Name()))) {
+				pfc++
+				fc++
+				if pfc > pgsize {
+					pfc = 0
+					pgcnt++
+
+				}
+			}
+		}
+		pp := true
+		np := true
+		for x := 0; x < pgcnt+1; x++ {
+			if pg > 1 {
+				if pp {
+					pgselect = pgselect + "  <A HREF='http://" + xip + ":8080/display?page=" + strconv.Itoa(pg-1) + "&sdir=" + sdir + "'> <<  </A>  "
+					pp = false
+				}
+			}
+			if pg == x+1 {
+				//pgselect = pgselect + "..."
+				pgselect = pgselect + "[<B>" + strconv.Itoa(pg) + "</B>]"
+			} else {
+
+				if x < maxsel {
+					pgselect = pgselect + "  <A HREF='http://" + xip + ":8080/display?page=" + strconv.Itoa(x+1) + "&sdir=" + sdir + "'> [ " + strconv.Itoa(x+1) + " ] </A>  "
+				}
+			}
+			if pgcnt > 1 {
+				if x == pgcnt {
+					if np {
+						pgselect = pgselect + "  <A HREF='http://" + xip + ":8080/display?page=" + strconv.Itoa(pg+1) + "&sdir=" + sdir + "'> >>  </A><BR>"
+						np = false
+					}
+				}
+			}
+		}
+		xdata = xdata + "<center>"
+		xdata = xdata + "File Count " + strconv.Itoa(fc)
+		xdata = xdata + "<BR>"
+		xdata = xdata + pgselect
+		xdata = xdata + "<BR>"
+		xdata = xdata + "</center>"
+		pfc = 0
+		xdata = xdata + "<center>"
+		xdata = xdata + "<TABLE>"
+		xdata = xdata + "<TD valign='top' with='160'>"
+		xdata = xdata + "<center>"
+		xdata = xdata + "<FIELDSET>"
+		xdata = xdata + "<LEGEND>"
+		xdata = xdata + " Folders "
+		xdata = xdata + "</LEGEND>"
+		if subdir {
+			entries, err := os.ReadDir(wdir + "./")
+			if err != nil {
+				log.Fatal(err)
+			}
+			fcol := 0
+			xdata = xdata + "<TABLE>"
+			xdata = xdata + "<TD valign='top' with='50'>"
+			xdata = xdata + "<center>"
+			for _, e := range entries {
+				fcol++
+				if fcol == 1 {
+					xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=1&sdir=" + e.Name() + "'>  [" + e.Name() + "]  </A><BR>  "
+				}
+				if fcol > 3 {
+					fcol = 0
+				}
+			}
+			xdata = xdata + "</center>"
+			xdata = xdata + "</TD>"
+			xdata = xdata + "<TD valign='top' with='50'>"
+			xdata = xdata + "<center>"
+			fcol = 0
+			for _, e := range entries {
+				fcol++
+				if fcol == 2 {
+					xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=1&sdir=" + e.Name() + "'>  [" + e.Name() + "]  </A><BR>  "
+				}
+				if fcol > 3 {
+					fcol = 0
+				}
+			}
+
+			xdata = xdata + "</center>"
+			xdata = xdata + "</TD>"
+			xdata = xdata + "<TD valign='top' with='50'>"
+			xdata = xdata + "<center>"
+			fcol = 0
+			for _, e := range entries {
+				fcol++
+				if fcol == 3 {
+					xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=1&sdir=" + e.Name() + "'>  [" + e.Name() + "]  </A><BR>  "
+				}
+				if fcol > 3 {
+					fcol = 0
+				}
+			}
+			xdata = xdata + "</center>"
+			xdata = xdata + "</TD>"
+			xdata = xdata + "<TD valign='top' with='50'>"
+			xdata = xdata + "<center>"
+			fcol = 0
+			for _, e := range entries {
+				fcol++
+				if fcol == 4 {
+					xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=1&sdir=" + e.Name() + "'>  [" + e.Name() + "]  </A><BR>  "
+				}
+				if fcol > 3 {
+					fcol = 0
+				}
+			}
+			xdata = xdata + "</center>"
+			xdata = xdata + "</TD>"
+			xdata = xdata + "</TABLE>"
+
+		}
+		xdata = xdata + "</FIELDSET>"
+		xdata = xdata + "</center>"
+		xdata = xdata + "</TD>"
+		xdata = xdata + "<TD with='100'>"
+		xdata = xdata + "</TD>"
+		xdata = xdata + "<TD valign='top' with='300'>"
+		xdata = xdata + "<center>"
+		xdata = xdata + "<FIELDSET>"
+		xdata = xdata + "<LEGEND>"
+		xdata = xdata + sdir
+		xdata = xdata + "</LEGEND>"
+		pgcnt = 1
+		fc = 0
+		for _, file := range files {
+
+			if ValidFileType(strings.ToLower(path.Ext(file.Name()))) {
+				pfc++
+				fc++
+				if pfc > pgsize {
+					pfc = 0
+					pgcnt++
+				}
+				if pgcnt == pg {
+					tfile := nsd + file.Name()
+					tnfile := fixFileName(tfile)
+					switch {
+					case display == 0:
+						xdata = xdata + BasicDisplay(exefile, exefilea, tnfile, file.Name(), fc, pfc, file.Name(), xip, sdir)
+					case display == 1:
+						xdata = xdata + ImageScrollDisplay(exefile, tnfile, file.Name(), fc, pfc, file.Name(), xip, sdir)
+					}
+					//-------------------------------------------------------------------------------------------------
+					xdata = xdata + "<TABLE>"
+					xdata = xdata + "<TD with='200'>"
+					xdata = xdata + "<center>"
+					xdata = xdata + " <A HREF='http://" + xip + ":8080/tagvideo?page=" + strconv.Itoa(pg) + "&video=" + file.Name() + "&sdir=" + sdir + "'> [ Video Tags ] </A>  "
+					xdata = xdata + "</center>"
+					xdata = xdata + "</TD>"
+					xdata = xdata + "<TD with='200'>"
+					xdata = xdata + " -------------- "
+					xdata = xdata + "</TD>"
+					xdata = xdata + "<TD with='400'>"
+					xdata = xdata + "<center>"
+					xdata = xdata + FileData(exefilea, tnfile, file.Name())
+					xdata = xdata + "</center>"
+					xdata = xdata + "</TD>"
+					xdata = xdata + "<TD with='200'>"
+					xdata = xdata + " -------------- "
+					xdata = xdata + "</TD>"
+					xdata = xdata + "<TD with='200'>"
+					xdata = xdata + "<center>"
+					xdata = xdata + " <A HREF='http://" + xip + ":8080/movevideo?video=" + file.Name() + "&sdir=" + sdir + "'> [ Move Video ] </A>  "
+					xdata = xdata + "</center>"
+					xdata = xdata + "</TD>"
+					xdata = xdata + "</TABLE>"
+					if pfc < pgsize {
+						xdata = xdata + "<HR>"
+					}
+				}
+			}
+		}
+		xdata = xdata + "</FIELDSET>"
+		xdata = xdata + "</center>"
+		xdata = xdata + "</TD>"
+		xdata = xdata + "</TABLE>"
+		xdata = xdata + "</center>"
+
+	}
+	//------------------------------------------------------------------------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + pgselect
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + " <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func PlayVideoPage(xip string, port string, video string, exefile string, exefilea string, drive string, wdir string, sdir string) string {
+	//---------------------------------------------------------------------------
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Play Video Page</title>"
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: white;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: black;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p1 {"
+	xdata = xdata + "color: green;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p2 {"
+	xdata = xdata + "color: red;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	div {"
+	xdata = xdata + "color: white;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<H1>Play Video Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<p2>Video Web Server</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Video " + video + "</p1>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	//------------------------------------------------------------------------
+	tfile := wdir + sdir + "/" + video
+	tnfile := fixFileName(tfile)
+	e := os.Remove("static/" + video + ".png")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	cmd := exec.Command(exefile, "-ss", "00:00:01", "-i", tnfile, "-vframes", "100", "-s", "600x400", "static/"+video+".png")
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+	}
+	xdata = xdata + "<center>"
+	xdata = xdata + " <A HREF='http://" + xip + ":8080/static/tmp.mp4'>  [ " + video + " ] <BR> <IMG SRC=static/" + video + ".png ALT=test123>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	//------------------------------------------------------------------------
+	e = os.Remove("static/tmp.mp4")
+	if e != nil {
+		fmt.Printf("Delete Error: %s\n", e)
+	}
+	if strings.ToLower(path.Ext(tnfile)) == ".mp4" {
+
+		_, _ = copy(tnfile, "static/tmp.mp4")
+		//fmt.Printf("%d %e \n", c, ce)
+
+	} else {
+
+		cmd = exec.Command(exefile, "-i", tnfile, "-strict", "-2", "static/tmp.mp4")
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+		}
+	}
+	//------------------------------------------------------------------------
+
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func MoveVideoPage(xip string, port string, video string, exefile string, exefilea string, drive string, wdir string, sdir string, subdir bool) string {
+	//---------------------------------------------------------------------------
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Move Video Page</title>"
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: white;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: black;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p1 {"
+	xdata = xdata + "color: green;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p2 {"
+	xdata = xdata + "color: red;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	div {"
+	xdata = xdata + "color: white;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<H1>Move Video Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<p2>Video Web Server</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Video " + video + "</p1>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	tfile := wdir + sdir + "/" + video
+	tnfile := fixFileName(tfile)
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<TABLE>"
+	xdata = xdata + "<TD valign='top' with='200'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + MoveDisplay(exefile, exefilea, tnfile, tfile, 1, tfile, xip, sdir)
+	xdata = xdata + "</center>"
+	xdata = xdata + "</TD>"
+	xdata = xdata + "<TD valign='top' with='200'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + FileData(exefilea, tnfile, tfile)
+	xdata = xdata + "</center>"
+	xdata = xdata + "</TD>"
+	xdata = xdata + "<TD with='200'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<FIELDSET>"
+	xdata = xdata + "<LEGEND>"
+	xdata = xdata + "Move to Folder"
+	xdata = xdata + "</LEGEND>"
+
+	if subdir {
+		entries, err := os.ReadDir(wdir + "./")
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, e := range entries {
+			xdata = xdata + "  <A HREF='http://" + xip + ":8080/movevideocomplete?video=" + video + "&sdir=" + sdir + "&ddir=" + e.Name() + "'> " + e.Name() + " </A><BR>  "
+
+		}
+	}
+	xdata = xdata + "</FIELDSET>"
+
+	xdata = xdata + "</center>"
+
+	xdata = xdata + "</TD>"
+	xdata = xdata + "</TABLE>"
+
+	xdata = xdata + "</center>"
+
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	//------------------------------------------------------------------------
+
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func MoveVideoCompletePage(xip string, port string, video string, exefile string, exefilea string, drive string, wdir string, sdir string, ddir string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Move Video Complete Page</title>"
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: white;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: black;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p1 {"
+	xdata = xdata + "color: green;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p2 {"
+	xdata = xdata + "color: red;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	div {"
+	xdata = xdata + "color: white;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<H1>Move Complete Video Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<p2>Video Web Server</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Video " + video + "</p1>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	//------------------------------------------------------------------------
+	tfile := wdir + sdir + "/" + video
+	srcfile := fixFileName(tfile)
+	tfile = wdir + ddir + "/" + video
+	dstfile := fixFileName(tfile)
+	xdata = xdata + "<center><BR>"
+
+	xdata = xdata + "Souce :" + srcfile + "<BR>"
+	xdata = xdata + "Destination :" + dstfile + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	//------------------------------------------------------------------------
+	err := os.Rename(srcfile, dstfile)
+	if err != nil {
+		fmt.Println(err)
+		xdata = xdata + "<center><B>"
+		xdata = xdata + "<BR><BR>Rename Error <BR><I>" + err.Error() + "</I><BR>"
+		xdata = xdata + "</B></center>"
+		return xdata
+	}
+	//---------------------------------------------------------------------------
+
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func TagVideoPage(xip string, port string, video string, exefile string, exefilea string, drive string, wdir string, sdir string, page string) string {
+	//---------------------------------------------------------------------------
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Tag Video Page</title>"
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: white;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: black;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p1 {"
+	xdata = xdata + "color: green;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p2 {"
+	xdata = xdata + "color: red;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	div {"
+	xdata = xdata + "color: white;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<H1>Tag Video Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<p2>Video Web Server</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Video " + video + "</p1>"
+	xdata = xdata + "<BR>"
+	//------------------------------------------------------------------------
+
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/display?page=" + page + "&sdir=" + sdir + "'> [ Return to Video Display Page ] </A><BR>  "
+
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/selecttag?page=" + page + "&sdir=" + sdir + "&video=" + video + "'> [ Add Tag ] </A> <BR> "
+
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "VIDEOS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+
+	field, err := table.NewFieldByName("VIDEO", video)
+	if err != nil {
+		panic(err)
+	}
+
+	records, err := table.Search(field, false)
+	if err != nil {
+		panic(err)
+	}
+
+	// Print all found records.
+	fmt.Println("Found records with match:")
+	for _, record := range records {
+		field = record.FieldByName("TAG")
+		if field == nil {
+			panic("Field not found")
+		}
+		tag := fmt.Sprintf("%v \n", field.GetValue())
+		field = record.FieldByName("RECORD")
+		if field == nil {
+			panic("Field not found")
+		}
+		recno := fmt.Sprintf("%d \n", field.GetValue())
+		field = record.FieldByName("RATED")
+		if field == nil {
+			panic("Field not found")
+		}
+		rated := fmt.Sprintf("%d \n", field.GetValue())
+
+		xdata = xdata + "  <A HREF='http://" + xip + ":8080/videotagedit?page=" + page + "&sdir=" + sdir + "&recno=" + recno + "&rated=" + rated + "&video=" + video + "'> [ " + tag + " ] </A><BR>  "
+
+	}
+	xdata = xdata + "</center>"
+
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	//------------------------------------------------------------------------
+
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func SelectTagPage(xip string, port string, video string, exefile string, exefilea string, drive string, wdir string, sdir string, page string) string {
+	//---------------------------------------------------------------------------
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Tag Video Page</title>"
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "<style>"
+	xdata = xdata + "body {"
+	xdata = xdata + "    background-color: white;"
+	xdata = xdata + "}"
+	xdata = xdata + "	h1 {"
+	xdata = xdata + "	color: black;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p1 {"
+	xdata = xdata + "color: green;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	p2 {"
+	xdata = xdata + "color: red;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "}"
+	xdata = xdata + "	div {"
+	xdata = xdata + "color: white;"
+	xdata = xdata + "font-family: verdana;"
+	xdata = xdata + "	font-size: 20px;"
+	xdata = xdata + "	text-align: center;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<H1>Tag Video Page</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<p2>Select Tag</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<p1>Video " + video + "</p1>"
+	xdata = xdata + "<BR>"
+
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "TAGS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	recno := 0
+	for !table.EOF() {
+		row, err := table.Next()
+		if err != nil {
+			panic(err)
+		}
+		//field := row.FieldByName("tag")
+		field := row.Field(0)
+		if field == nil {
+			panic("Field not found")
+		}
+		s := fmt.Sprintf("%v", field.GetValue())
+		xdata = xdata + "  <A HREF='http://" + xip + ":8080/selectcomplete?page=" + page + "&sdir=" + sdir + "&video=" + video + "&recno=" + strconv.Itoa(recno) + "&tag=" + s + "'> [ " + s + " ] </A>  "
+		xdata = xdata + "<BR>"
+		recno++
+
+	}
+	//------------------------------------------------------------------------
+	xdata = xdata + "</center>"
+
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	//------------------------------------------------------------------------
+
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func VideoTagEditPage(xip string, video string, tag string, recno string, rated string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Video Tag Edit Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Video Tag Edit</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "Video Tags"
+
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "VIDEOS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+
+	//------------------------------------------------------------------------
+	xdata = xdata + " Tag Rated "
+	xdata = xdata + "<form action='/videotagupdate?recno=" + rated + "' method='post'>"
+	xdata = xdata + "<textarea id='tag' name='tag' rows='1' cols='20'>" + rated + "</textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<input type='submit' value='Update Tag Rating'/>"
+	xdata = xdata + "</form>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<BR>"
+
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func SearchPage(xip string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Search Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Video Search Page</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + " Find Video : "
+
+	xdata = xdata + "<form action='/findvideo' method='post'>"
+	xdata = xdata + "<textarea id='map' name='map' rows='1' cols='20'></textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<input type='submit' value='Find Video'/>"
+	xdata = xdata + "</form>"
+
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func SearchResultsPage(xip string, find string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Search Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Video Search Page</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/search'> [ Search ] </A><BR>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + " Find Video : "
+
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func CategoriesPage(xip string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Video Categories Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Categories</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR>"
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "TAGS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	for !table.EOF() {
+		row, err := table.Next()
+		if err != nil {
+			panic(err)
+		}
+		//field := row.FieldByName("tag")
+		field := row.Field(0)
+		if field == nil {
+			panic("Field not found")
+		}
+		s := fmt.Sprintf("%v", field.GetValue())
+		xdata = xdata + "  <A HREF='http://" + xip + ":8080/categorydisplay?tag=" + s + "'> [ " + s + " ] </A>  "
+		xdata = xdata + "<BR>"
+
+	}
+	return xdata
+}
+
+// ----------------------------------------------------------------
+func CategoryDisplayPage(xip string, exefile string, exefilea string, tag string, wdir string) string {
+
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Category Display Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>" + tag + " Videos</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "VIDEOS.DBF",
+		TrimSpaces: true,
+		WriteLock:  true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+
+	for !table.EOF() {
+		row, err := table.Next()
+		if err != nil {
+			panic(err)
+		}
+		vtag := row.Field(0)
+		if vtag == nil {
+			panic("Field not found")
+		}
+
+		vt := fmt.Sprintf("%v", vtag.GetValue())
+		if vt == tag {
+			vid := row.Field(1)
+			if vid == nil {
+				panic("Field not found")
+			}
+			v := fmt.Sprintf("%v", vid.GetValue())
+			dir := row.Field(2)
+			if dir == nil {
+				panic("Field not found")
+			}
+			s := fmt.Sprintf("%v", dir.GetValue())
+
+			fmt.Println("test")
+			tfile := wdir + s + "/" + v
+			tnfile := fixFileName(tfile)
+			fmt.Println(tnfile)
+			tp1 := TimePosition(exefilea, tnfile, 1)
+			tp2 := TimePosition(exefilea, tnfile, 2)
+			tp3 := TimePosition(exefilea, tnfile, 3)
+			pfc := 1
+
+			cmd := exec.Command(exefile, "-ss", tp1, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"1.png")
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+			}
+
+			cmd = exec.Command(exefile, "-ss", tp2, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"2.png")
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+			}
+			cmd = exec.Command(exefile, "-ss", tp3, "-i", tnfile, "-vframes", "100", "-s", "128x96", "static/"+strconv.Itoa(pfc)+"3.png")
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("Command %s \n Error: %s\n", cmd, err)
+			}
+
+			xdata = xdata + "  <A HREF='http://" + xip + ":8080/playvideo?sdir=" + s + "&video= " + v + "'> [ " + v + " ] <BR> <IMG SRC=static/" + strconv.Itoa(pfc) + "1.png ALT=test123> <IMG SRC=static/" + strconv.Itoa(pfc) + "2.png  ALT=xerror> <IMG SRC=static/" + strconv.Itoa(pfc) + "3.png  ALT=error> </A>  "
+			xdata = xdata + "<BR>"
+		}
+		//	recno++
+
+	}
+
+	xdata = xdata + "<BR>"
+
+	return xdata
 }
