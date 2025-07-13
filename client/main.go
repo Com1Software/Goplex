@@ -1,212 +1,108 @@
 package main
 
 import (
-	"bufio"
-	"encoding/xml"
-	"log"
-	"net"
-	"net/http"
-	"os"
-	"time"
-
 	"fmt"
+	"os"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	weather "github.com/Com1Software/Go-Weather"
 )
 
-// ----------------------------------------------------------------
 func main() {
-	agent := SSE()
-	xip := fmt.Sprintf("%s", GetOutboundIP())
-	port := "8080"
 	a := app.New()
-	w := a.NewWindow("Listening on " + xip + ":" + port)
-	tctl := 0
-	tc := 0
-	memo := widget.NewEntry()
-	memo.SetPlaceHolder("Enter an IP address to sync with...")
-	memo.MultiLine = true               // Enable multiline for larger text fields
-	memo.Resize(fyne.NewSize(400, 100)) // Adjust the height (4x the default)
+	url := "https://forecast.weather.gov/MapClick.php?lat=41.25&lon=-81.44&unit=0&lg=english&FcstType=dwml"
+	w := a.NewWindow("Weather App")
+	time := widget.NewLabel("Current Time :" + weather.GetWeather(url, 0))
+	loc := widget.NewLabel("Location :" + weather.GetWeather(url, 1))
+	temp := widget.NewLabel("Current Temperature :" + weather.GetWeather(url, 3))
+	cond := widget.NewLabel("Current Conditions :" + weather.GetWeather(url, 5))
+	sw := widget.NewLabel("Sustained Wind :" + weather.GetWeather(url, 7))
+	wg := widget.NewLabel("Wind Gusts :" + weather.GetWeather(url, 8))
+	bar := widget.NewLabel("Barometer :" + weather.GetWeather(url, 9))
+	hum := widget.NewLabel("Humidity :" + weather.GetWeather(url, 10))
+	dp := widget.NewLabel("Dew Point :" + weather.GetWeather(url, 11))
+	vis := widget.NewLabel("Visibility :" + weather.GetWeather(url, 13))
+	wc := widget.NewLabel("Wind Chill :" + weather.GetWeather(url, 14))
+	hw := widget.NewLabel("Hazard Warning :" + weather.GetWeather(url, 2))
 
-	memo1 := widget.NewEntry()
-	memo1.SetPlaceHolder("...")
-	memo1.MultiLine = true               // Enable multiline for larger text fields
-	memo1.Resize(fyne.NewSize(400, 100)) // Adjust the height (4x the default)
+	forcastButton := widget.NewButton("Forecast", func() {
+		fd := weather.GetWeather(url, 15) + " " + weather.GetWeather(url, 16) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 18)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 19) + " " + weather.GetWeather(url, 20) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 22)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 23) + " " + weather.GetWeather(url, 24) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 26)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 27) + " " + weather.GetWeather(url, 28) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 30)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 31) + " " + weather.GetWeather(url, 32) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 34)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 35) + " " + weather.GetWeather(url, 36) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 38)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 39) + " " + weather.GetWeather(url, 40) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 42)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 43) + " " + weather.GetWeather(url, 44) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 46)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 47) + " " + weather.GetWeather(url, 48) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 50)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 51) + " " + weather.GetWeather(url, 52) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 54)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 55) + " " + weather.GetWeather(url, 56) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 58)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 59) + " " + weather.GetWeather(url, 60) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 62)) + "\n\n"
+		fd = fd + weather.GetWeather(url, 63) + " " + weather.GetWeather(url, 64) + "\n "
+		fd = fd + wordWrap(weather.GetWeather(url, 66)) + "\n"
 
-	input := widget.NewEntry()
-	input.SetPlaceHolder("Enter Command...")
+		content := widget.NewLabel(fd)
+		scrollableContent := container.NewVScroll(content)
+		scrollableContent.SetMinSize(fyne.NewSize(400, 400)) // Adjust the size as needed
+		dialog.ShowCustom("Weather Forecast", "Close", scrollableContent, w)
 
-	inputvalue := widget.NewEntry()
-	inputvalue.SetPlaceHolder("Enter Value...")
-
-	button := widget.NewButton("Cmd", func() {
 	})
 
-	helloButton := widget.NewButton("Connect", func() {
-		url := memo.Text
-		go func() {
-			for {
-				data := ReadURL(url)
-
-				// Use fyne.Do to safely update the UI from a goroutine
-				fyne.Do(func() {
-					memo1.SetText(data)
-				})
-
-				time.Sleep(1 * time.Second) // Adjust the refresh rate as needed
-			}
-		}()
-
-	})
 	exitButton := widget.NewButton("Exit", func() {
 		os.Exit(0)
 	})
 
-	inputContainer := container.NewGridWrap(fyne.NewSize(165, 40), input)
-	inputContainerValue := container.NewGridWrap(fyne.NewSize(165, 40), inputvalue)
-	buttonContainer := container.NewGridWrap(fyne.NewSize(50, 40), button)
-	layoutContainer := container.NewHBox(buttonContainer, inputContainer, inputContainerValue)
-
 	w.SetContent(container.NewVBox(
-		memo,            // Add the memo field
-		memo1,           // Add the second memo field
-		layoutContainer, // Add the input field and button
-		helloButton,     // Add the "Say Hello" button
-		exitButton,      // Add the "Exit" button
+		time,
+		loc,
+		temp,
+		cond,
+		sw,
+		wg,
+		bar,
+		hum,
+		dp,
+		vis,
+		wc,
+		hw,
+		forcastButton,
+		exitButton,
 	))
 	w.Resize(fyne.NewSize(400, 300))
-
-	go func() {
-		for {
-			switch {
-			case tctl == 0:
-				time.Sleep(time.Second * 1)
-			case tctl == 1:
-				time.Sleep(time.Second * -1)
-				tc++
-				fmt.Printf("loop count = %d\n", tc)
-			}
-			dtime := fmt.Sprintf("%s", time.Now())
-			msg := "<message>"
-			msg = msg + "<controller>" + fmt.Sprint(GetOutboundIP()) + "</controller>"
-			msg = msg + "<date_time>" + dtime[0:24] + "</date_time>"
-			msg = msg + "<command>" + fmt.Sprintf("%s", input.Text) + "</command>"
-			msg = msg + "<value>" + fmt.Sprintf("%s", inputvalue.Text) + "</value>"
-
-			msg = msg + "/<message>\n"
-			event := msg
-			//		event := fmt.Sprintf("Controller=%s Time=%v\n", GetOutboundIP(), dtime[0:24])
-			agent.Notifier <- []byte(event)
-		}
-	}()
-	go fmt.Printf("Listening at  : %s Port : %s\n", xip, port)
-	go http.ListenAndServe(":"+port, agent)
-
 	w.ShowAndRun()
-
 }
 
-func GetOutboundIP() net.IP {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		fmt.Println(err)
-	}
-	defer conn.Close()
+func wordWrap(s string) string {
+	max := 40
+	xdata := ""
+	cl := 0
+	words := strings.Split(s, " ")
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-
-	return localAddr.IP
-}
-
-type message struct {
-	Controller string `xml:"controller"`
-	DateTime   string `xml:"date_time"`
-	Command    string `xml:"command"`
-	Value      string `xml:"value"`
-}
-
-func ReadURL(url string) string {
-	msg := &message{}
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-	reader := bufio.NewReader(resp.Body)
-
-	for {
-		line, erra := reader.ReadBytes('\n')
-		if erra != nil {
-			log.Fatal(erra) // Ensure correct error logging
+	for _, word := range words {
+		if cl+len(word) > max {
+			xdata = strings.TrimSpace(xdata) + "\n"
+			cl = 0
 		}
-		xml.Unmarshal(line, &msg)
-		break // Exit after the first read
+		xdata += word + " "
+		cl += len(word) + 1
 	}
-
-	// Construct the string with extracted values
-	return msg.Controller + " " + msg.DateTime + " " + msg.Command + " " + msg.Value
-}
-
-type Agent struct {
-	Notifier    chan []byte
-	newuser     chan chan []byte
-	closinguser chan chan []byte
-	user        map[chan []byte]bool
-}
-
-func SSE() (agent *Agent) {
-	agent = &Agent{
-		Notifier:    make(chan []byte, 1),
-		newuser:     make(chan chan []byte),
-		closinguser: make(chan chan []byte),
-		user:        make(map[chan []byte]bool),
-	}
-	go agent.listen()
-	return
-}
-
-func (agent *Agent) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	flusher, ok := rw.(http.Flusher)
-	if !ok {
-		http.Error(rw, "Error ", http.StatusInternalServerError)
-		return
-	}
-	rw.Header().Set("Content-Type", "text/event-stream")
-	rw.Header().Set("Cache-Control", "no-cache")
-	rw.Header().Set("Connection", "keep-alive")
-	rw.Header().Set("Access-Control-Allow-Origin", "*")
-	mChan := make(chan []byte)
-	agent.newuser <- mChan
-	defer func() {
-		agent.closinguser <- mChan
-	}()
-	notify := req.Context().Done()
-	go func() {
-		<-notify
-		agent.closinguser <- mChan
-	}()
-	for {
-		fmt.Fprintf(rw, "%s", <-mChan)
-		flusher.Flush()
-	}
-
-}
-
-func (agent *Agent) listen() {
-	for {
-		select {
-		case s := <-agent.newuser:
-			agent.user[s] = true
-		case s := <-agent.closinguser:
-			delete(agent.user, s)
-		case event := <-agent.Notifier:
-			for userMChan, _ := range agent.user {
-				userMChan <- event
-			}
-		}
-	}
-
+	fmt.Println(xdata)
+	return strings.TrimSpace(xdata)
 }
