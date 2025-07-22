@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 
 	"fmt"
 	"os"
@@ -45,6 +46,52 @@ func main() {
 			xdata := AboutPage(xip)
 			fmt.Fprint(w, xdata)
 		})
+		//------------------------------------------------ App Table Display Page Handler
+		http.HandleFunc("/apptabledisplay", func(w http.ResponseWriter, r *http.Request) {
+			xdata := DisplayPage(xip, port)
+			fmt.Fprint(w, xdata)
+
+		})
+		http.HandleFunc("/addapplication", func(w http.ResponseWriter, r *http.Request) {
+			app := r.FormValue("app")
+			fmt.Println(app)
+			if len(app) > 0 {
+				table, err := dbase.OpenTable(&dbase.Config{
+					Filename:   "APPS.DBF",
+					TrimSpaces: true,
+					WriteLock:  true,
+				})
+				if err != nil {
+					panic(err)
+				}
+				defer table.Close()
+				row, err := table.Row()
+				if err != nil {
+					panic(err)
+				}
+				p := Apps{
+					App: app,
+				}
+
+				row, err = table.RowFromStruct(p)
+				if err != nil {
+					panic(err)
+				}
+				//			fmt.Println(row)
+				err = row.FieldByName("APP").SetValue(app)
+				if err != nil {
+					panic(err)
+				}
+				err = row.Write()
+				if err != nil {
+					panic(err)
+				}
+			}
+			xdata := DisplayPage(xip, port)
+			fmt.Fprint(w, xdata)
+
+		})
+
 		//------------------------------------------------- Start Server
 		TableCheck()
 		Openbrowser(xip + ":" + port)
@@ -303,6 +350,7 @@ func InitPage(xip string) string {
 	xdata = xdata + "<BR> Machine IP : " + xxip + "</p>"
 
 	xdata = xdata + "  <A HREF='http://" + xip + ":8080/about'> [ About ] </A>  "
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/apptabledisplay'> [ Aplication Table ] </A>  "
 	xdata = xdata + "<BR><BR>Goplex Server"
 
 	//------------------------------------------------------------------------
@@ -353,6 +401,80 @@ func AboutPage(xip string) string {
 	xdata = xdata + "Goplex Server"
 	//------------------------------------------------------------------------
 
+	//------------------------------------------------------------------------
+	xdata = xdata + " </body>"
+	xdata = xdata + " </html>"
+	return xdata
+
+}
+
+// ----------------------------------------------------------------
+func DisplayPage(xip string, port string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	xdata = xdata + "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+	xdata = xdata + "<style>"
+	xdata = xdata + "div.scroll-container {"
+	xdata = xdata + "background-color: #333;"
+	xdata = xdata + "overflow: auto;"
+	xdata = xdata + "white-space: nowrap;"
+	xdata = xdata + "padding: 10px;"
+	xdata = xdata + "}"
+	xdata = xdata + "div.scroll-container img {"
+	xdata = xdata + "padding: 10px;"
+	xdata = xdata + "}"
+	xdata = xdata + "</style>"
+
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H1>Application Table</H1>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	xdata = xdata + "<p2>Application Table</p2>"
+	xdata = xdata + "<BR>"
+	xdata = xdata + "</center>"
+	//------------------------------------------------------------------------
+	//------------------------------------------------------------------------
+	xdata = xdata + "<center>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + " <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	//------------------------------------------------------------------------
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<form action='/addapplication' method='post'>"
+	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'></textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<input type='submit' value='Add Application'/>"
+	xdata = xdata + "</form>"
+	xdata = xdata + "<BR><BR>"
+	table, err := dbase.OpenTable(&dbase.Config{
+		Filename:   "APPS.DBF",
+		TrimSpaces: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer table.Close()
+	recno := 0
+	for !table.EOF() {
+		row, err := table.Next()
+		if err != nil {
+			panic(err)
+		}
+		//field := row.FieldByName("tag")
+		field := row.Field(0)
+		if field == nil {
+			panic("Field not found")
+		}
+		s := fmt.Sprintf("%v", field.GetValue())
+		xdata = xdata + "  <A HREF='http://" + xip + ":8080/tagedit?recno=" + strconv.Itoa(recno) + "'> [ " + s + " ] </A>  "
+		xdata = xdata + "<BR>"
+		recno++
+
+	}
+	xdata = xdata + "</center>"
 	//------------------------------------------------------------------------
 	xdata = xdata + " </body>"
 	xdata = xdata + " </html>"
