@@ -5,13 +5,9 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
-	"strconv"
 
 	"fmt"
 	"os"
-
-	"github.com/Com1Software/go-dbase/dbase"
-	"golang.org/x/text/encoding/charmap"
 )
 
 type Apps struct {
@@ -56,38 +52,16 @@ func main() {
 			app := r.FormValue("app")
 			fmt.Println(app)
 			if len(app) > 0 {
-				table, err := dbase.OpenTable(&dbase.Config{
-					Filename:   "APPS.DBF",
-					TrimSpaces: true,
-					WriteLock:  true,
-				})
-				if err != nil {
-					panic(err)
-				}
-				defer table.Close()
-				row, err := table.Row()
-				if err != nil {
-					panic(err)
-				}
-				p := Apps{
-					App: app,
-				}
 
-				row, err = table.RowFromStruct(p)
-				if err != nil {
-					panic(err)
-				}
-				//			fmt.Println(row)
-				err = row.FieldByName("APP").SetValue(app)
-				if err != nil {
-					panic(err)
-				}
-				err = row.Write()
-				if err != nil {
-					panic(err)
-				}
 			}
 			xdata := DisplayPage(xip, port)
+			fmt.Fprint(w, xdata)
+
+		})
+		//------------------------------------------------ Tag Edit Page Handler
+		http.HandleFunc("/tagedit", func(w http.ResponseWriter, r *http.Request) {
+			recno := r.URL.Query().Get("recno")
+			xdata := EditTagPage(xip, recno)
 			fmt.Fprint(w, xdata)
 
 		})
@@ -130,70 +104,10 @@ func TableCheck() {
 
 	} else {
 
-		file, err := dbase.NewTable(
-			dbase.FoxProAutoincrement,
-			&dbase.Config{
-				Filename:   tt,
-				Converter:  dbase.NewDefaultConverter(charmap.Windows1250),
-				TrimSpaces: true,
-			},
-			tcolumns(),
-			64,
-			nil,
-		)
-		if err != nil {
-			panic(err)
-		}
-		defer file.Close()
-
-		row, err := file.RowFromStruct(&Apps{
-			App: "APP",
-		})
-		if err != nil {
-			panic(err)
-		}
-
-		err = row.Add()
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf(
-			"Last modified: %v Columns count: %v Record count: %v File size: %v \n",
-			file.Header().Modified(0),
-			file.Header().ColumnsCount(),
-			file.Header().RecordsCount(),
-			file.Header().FileSize(),
-		)
+		// file:=""
 
 	}
 
-}
-
-func tcolumns() []*dbase.Column {
-
-	appCol, err := dbase.NewColumn("APP", dbase.Varchar, 80, 0, false)
-	if err != nil {
-		panic(err)
-	}
-	return []*dbase.Column{
-		appCol,
-	}
-}
-
-func vcolumns() []*dbase.Column {
-
-	appCol, err := dbase.NewColumn("App", dbase.Varchar, 80, 0, false)
-	userCol, err := dbase.NewColumn("User", dbase.Varchar, 254, 0, false)
-	pwCol, err := dbase.NewColumn("Password", dbase.Varchar, 254, 0, false)
-
-	if err != nil {
-		panic(err)
-	}
-	return []*dbase.Column{
-		appCol,
-		userCol,
-		pwCol,
-	}
 }
 
 func DateTimeDisplay(xdata string) string {
@@ -449,35 +363,54 @@ func DisplayPage(xip string, port string) string {
 	xdata = xdata + "<input type='submit' value='Add Application'/>"
 	xdata = xdata + "</form>"
 	xdata = xdata + "<BR><BR>"
-	table, err := dbase.OpenTable(&dbase.Config{
-		Filename:   "APPS.DBF",
-		TrimSpaces: true,
-	})
-	if err != nil {
-		panic(err)
-	}
-	defer table.Close()
-	recno := 0
-	for !table.EOF() {
-		row, err := table.Next()
-		if err != nil {
-			panic(err)
-		}
-		//field := row.FieldByName("tag")
-		field := row.Field(0)
-		if field == nil {
-			panic("Field not found")
-		}
-		s := fmt.Sprintf("%v", field.GetValue())
-		xdata = xdata + "  <A HREF='http://" + xip + ":8080/tagedit?recno=" + strconv.Itoa(recno) + "'> [ " + s + " ] </A>  "
-		xdata = xdata + "<BR>"
-		recno++
 
-	}
 	xdata = xdata + "</center>"
 	//------------------------------------------------------------------------
 	xdata = xdata + " </body>"
 	xdata = xdata + " </html>"
 	return xdata
 
+}
+
+// ----------------------------------------------------------------
+func EditTagPage(xip string, recno string) string {
+	//----------------------------------------------------------------------------
+	xdata := "<!DOCTYPE html>"
+	xdata = xdata + "<html>"
+	xdata = xdata + "<head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<title>Application Page</title>"
+	xdata = LoopDisplay(xdata)
+	//------------------------------------------------------------------------
+	xdata = DateTimeDisplay(xdata)
+	xdata = xdata + "</head>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "<body onload='startTime()'>"
+	xdata = xdata + "<center>"
+	xdata = xdata + "<H3>Edit Application</H3>"
+	xdata = xdata + "<div id='txtdt'></div>"
+	//---------
+	xdata = xdata + "<BR><BR>"
+	//------------------------------------------------------------------------
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "Applications"
+	s := ""
+	sa := ""
+	sb := ""
+	//------------------------------------------------------------------------
+	xdata = xdata + "<BR>"
+	xdata = xdata + "<form action='/updatetag?recno=" + recno + "' method='post'>"
+	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + s + "</textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + sa + "</textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + sb + "</textarea>"
+
+	xdata = xdata + "<input type='submit' value='Upadte Application'/>"
+	xdata = xdata + "</form>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "<BR>"
+
+	return xdata
 }
