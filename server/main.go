@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/xml"
+	"log"
 	"net"
 	"net/http"
 	"os/exec"
@@ -20,6 +22,8 @@ func main() {
 	fmt.Printf("Operating System : %s\n", runtime.GOOS)
 	xip := fmt.Sprintf("%s", GetOutboundIP())
 	port := "8080"
+	tt := "applicationtable.xml"
+
 	switch {
 	//-------------------------------------------------------------
 	case len(os.Args) == 2:
@@ -44,7 +48,7 @@ func main() {
 		})
 		//------------------------------------------------ App Table Display Page Handler
 		http.HandleFunc("/apptabledisplay", func(w http.ResponseWriter, r *http.Request) {
-			xdata := DisplayPage(xip, port)
+			xdata := DisplayPage(xip, port, tt)
 			fmt.Fprint(w, xdata)
 
 		})
@@ -54,7 +58,7 @@ func main() {
 			if len(app) > 0 {
 
 			}
-			xdata := DisplayPage(xip, port)
+			xdata := DisplayPage(xip, port, tt)
 			fmt.Fprint(w, xdata)
 
 		})
@@ -67,12 +71,18 @@ func main() {
 		})
 
 		//------------------------------------------------- Start Server
-		TableCheck()
+		TableCheck(tt)
 		Openbrowser(xip + ":" + port)
 		if err := http.ListenAndServe(xip+":"+port, nil); err != nil {
 			panic(err)
 		}
 	}
+}
+
+type Result struct {
+	XMLName xml.Name `xml:"application`
+	User    string   `xml:"user"`
+	Phone   string
 }
 
 // Openbrowser : Opens default web browser to specified url
@@ -97,14 +107,48 @@ func Openbrowser(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-func TableCheck() {
-	tt := "APPS.DBF"
+type Application struct {
+	XMLName  xml.Name `xml:"application"`
+	User     string   `xml:"user"`
+	Password string   `xml:"password"`
+}
+
+func TableCheck(tt string) {
 
 	if _, err := os.Stat(tt); err == nil {
 
 	} else {
 
-		// file:=""
+		p := Application{
+			User:     "admin",
+			Password: "admin",
+		}
+
+		// Marshal the struct into XML bytes with indentation for readability
+		xmlBytes, err := xml.MarshalIndent(p, "", "  ")
+		if err != nil {
+			fmt.Println("Error marshaling XML:", err)
+			return
+		}
+
+		// Add the XML header
+		xmlData := []byte(xml.Header + string(xmlBytes))
+
+		// Create a new XML file
+		file, err := os.Create(tt)
+		if err != nil {
+			fmt.Println("Error creating file:", err)
+			return
+		}
+		defer file.Close() // Ensure the file is closed
+
+		// Write the XML data to the file
+		_, err = file.Write(xmlData)
+		if err != nil {
+			fmt.Println("Error writing to file:", err)
+			return
+		}
+		fmt.Println("XML file Created.")
 
 	}
 
@@ -323,7 +367,7 @@ func AboutPage(xip string) string {
 }
 
 // ----------------------------------------------------------------
-func DisplayPage(xip string, port string) string {
+func DisplayPage(xip string, port string, tt string) string {
 	//----------------------------------------------------------------------------
 	xdata := "<!DOCTYPE html>"
 	xdata = xdata + "<html>"
@@ -363,6 +407,17 @@ func DisplayPage(xip string, port string) string {
 	xdata = xdata + "<input type='submit' value='Add Application'/>"
 	xdata = xdata + "</form>"
 	xdata = xdata + "<BR><BR>"
+	data, err := os.ReadFile(tt)
+	if err != nil {
+		log.Fatalf("Error reading file: %v", err)
+	}
+
+	v := Result{User: "none", Phone: "none"}
+	err = xml.Unmarshal([]byte(data), &v)
+	if err != nil {
+		fmt.Printf("error: %v", err)
+	}
+	fmt.Println("Name:", v.User)
 
 	xdata = xdata + "</center>"
 	//------------------------------------------------------------------------
