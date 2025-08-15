@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 
 	"fmt"
 	"os"
@@ -56,6 +57,7 @@ func main() {
 			app := r.FormValue("app")
 			fmt.Println(app)
 			if len(app) > 0 {
+				TableAdd(tt, app)
 
 			}
 			xdata := DisplayPage(xip, port, tt)
@@ -136,6 +138,45 @@ func TableCheck(tt string) {
 
 		// Create a new XML file
 		file, err := os.Create(tt)
+		if err != nil {
+			fmt.Println("Error creating file:", err)
+			return
+		}
+		defer file.Close() // Ensure the file is closed
+
+		// Write the XML data to the file
+		_, err = file.Write(xmlData)
+		if err != nil {
+			fmt.Println("Error writing to file:", err)
+			return
+		}
+		fmt.Println("XML file Created.")
+
+	}
+
+}
+
+func TableAdd(tt string, app string) {
+
+	if _, err := os.Stat(tt); err == nil {
+
+		p := Application{
+			User:     app,
+			Password: "admin",
+		}
+
+		// Marshal the struct into XML bytes with indentation for readability
+		xmlBytes, err := xml.MarshalIndent(p, "", "  ")
+		if err != nil {
+			fmt.Println("Error marshaling XML:", err)
+			return
+		}
+
+		// Add the XML header
+		xmlData := []byte(xml.Header + string(xmlBytes))
+		fmt.Println("XML Data:", string(xmlData))
+		// Create a new XML file
+		file, err := os.OpenFile(tt, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Println("Error creating file:", err)
 			return
@@ -418,7 +459,9 @@ func DisplayPage(xip string, port string, tt string) string {
 		fmt.Printf("error: %v", err)
 	}
 	fmt.Println("Name:", v.User)
-
+	recno := 0
+	xdata = xdata + "  <A HREF='http://" + xip + ":8080/tagedit?recno=" + strconv.Itoa(recno) + "'> [ " + v.User + " ] </A>  "
+	xdata = xdata + "<BR>"
 	xdata = xdata + "</center>"
 	//------------------------------------------------------------------------
 	xdata = xdata + " </body>"
