@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
-	"strconv"
 
 	"fmt"
 	"os"
@@ -55,7 +54,6 @@ func main() {
 		})
 		http.HandleFunc("/addapplication", func(w http.ResponseWriter, r *http.Request) {
 			app := r.FormValue("app")
-			fmt.Println(app)
 			if len(app) > 0 {
 				TableAdd(tt, app)
 
@@ -82,9 +80,25 @@ func main() {
 }
 
 type Result struct {
-	XMLName xml.Name `xml:"application`
-	User    string   `xml:"user"`
-	Phone   string
+	User  string `xml:"User"`
+	Phone string `xml:"Phone"`
+}
+
+type Results struct {
+	Entries []Result `xml:"Result"`
+}
+
+type Root struct {
+	Results []Result `xml:"Result"`
+}
+
+type Application struct {
+	User     string `xml:"User"`
+	Password string `xml:"Password"`
+}
+
+type Applications struct {
+	Entries []Application `xml:"Application"`
 }
 
 // Openbrowser : Opens default web browser to specified url
@@ -107,12 +121,6 @@ func Openbrowser(url string) error {
 	}
 	args = append(args, url)
 	return exec.Command(cmd, args...).Start()
-}
-
-type Application struct {
-	XMLName  xml.Name `xml:"application"`
-	User     string   `xml:"user"`
-	Password string   `xml:"password"`
 }
 
 func TableCheck(tt string) {
@@ -174,7 +182,6 @@ func TableAdd(tt string, app string) {
 
 		// Add the XML header
 		xmlData := []byte(xml.Header + string(xmlBytes))
-		fmt.Println("XML Data:", string(xmlData))
 		// Create a new XML file
 		file, err := os.OpenFile(tt, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -189,7 +196,6 @@ func TableAdd(tt string, app string) {
 			fmt.Println("Error writing to file:", err)
 			return
 		}
-		fmt.Println("XML file Created.")
 
 	}
 
@@ -409,7 +415,6 @@ func AboutPage(xip string) string {
 
 // ----------------------------------------------------------------
 func DisplayPage(xip string, port string, tt string) string {
-	//----------------------------------------------------------------------------
 	xdata := "<!DOCTYPE html>"
 	xdata = xdata + "<html>"
 	xdata = xdata + "<head>"
@@ -439,6 +444,7 @@ func DisplayPage(xip string, port string, tt string) string {
 	//------------------------------------------------------------------------
 	xdata = xdata + "<center>"
 	xdata = xdata + "<BR><BR>"
+
 	xdata = xdata + " <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
 	//------------------------------------------------------------------------
 	xdata = xdata + "<BR><BR>"
@@ -448,26 +454,24 @@ func DisplayPage(xip string, port string, tt string) string {
 	xdata = xdata + "<input type='submit' value='Add Application'/>"
 	xdata = xdata + "</form>"
 	xdata = xdata + "<BR><BR>"
+
 	data, err := os.ReadFile(tt)
 	if err != nil {
 		log.Fatalf("Error reading file: %v", err)
 	}
-
-	v := Result{User: "none", Phone: "none"}
-	err = xml.Unmarshal([]byte(data), &v)
+	wrapped := "<Applications>" + string(data) + "</Applications>"
+	var apps Applications
+	err = xml.Unmarshal([]byte(wrapped), &apps)
 	if err != nil {
 		fmt.Printf("error: %v", err)
 	}
-	fmt.Println("Name:", v.User)
-	recno := 0
-	xdata = xdata + "  <A HREF='http://" + xip + ":8080/tagedit?recno=" + strconv.Itoa(recno) + "'> [ " + v.User + " ] </A>  "
-	xdata = xdata + "<BR>"
-	xdata = xdata + "</center>"
-	//------------------------------------------------------------------------
-	xdata = xdata + " </body>"
-	xdata = xdata + " </html>"
-	return xdata
+	for i, entry := range apps.Entries {
+		xdata += fmt.Sprintf("<A HREF='http://%s:%s/tagedit?recno=%d'> [ %s ] </A><BR>", xip, port, i, entry.User)
+	}
 
+	xdata += "</center>"
+	xdata += "</body></html>"
+	return xdata
 }
 
 // ----------------------------------------------------------------
