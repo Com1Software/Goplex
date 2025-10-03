@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 
 	"fmt"
 	"os"
@@ -65,7 +66,17 @@ func main() {
 		//------------------------------------------------ Tag Edit Page Handler
 		http.HandleFunc("/tagedit", func(w http.ResponseWriter, r *http.Request) {
 			recno := r.URL.Query().Get("recno")
-			xdata := EditTagPage(xip, recno)
+			xdata := EditTagPage(xip, recno, tt)
+			fmt.Fprint(w, xdata)
+
+		})
+		//------------------------------------------------ Update Handler
+		http.HandleFunc("/updateapp", func(w http.ResponseWriter, r *http.Request) {
+			recno := r.URL.Query().Get("recno")
+			app := r.FormValue("app")
+			password := r.FormValue("password")
+			UpdateTable(tt, recno, app, password)
+			xdata := DisplayPage(xip, port, tt)
 			fmt.Fprint(w, xdata)
 
 		})
@@ -475,7 +486,10 @@ func DisplayPage(xip string, port string, tt string) string {
 }
 
 // ----------------------------------------------------------------
-func EditTagPage(xip string, recno string) string {
+func EditTagPage(xip string, recno string, tt string) string {
+
+	sa := ""
+	sb := ""
 	//----------------------------------------------------------------------------
 	xdata := "<!DOCTYPE html>"
 	xdata = xdata + "<html>"
@@ -493,26 +507,75 @@ func EditTagPage(xip string, recno string) string {
 	xdata = xdata + "<div id='txtdt'></div>"
 	//---------
 	xdata = xdata + "<BR><BR>"
+	data, err := os.ReadFile(tt)
+	if err != nil {
+		log.Fatalf("Error reading file: %v", err)
+	}
+	wrapped := "<Applications>" + string(data) + "</Applications>"
+	var apps Applications
+	err = xml.Unmarshal([]byte(wrapped), &apps)
+	if err != nil {
+		fmt.Printf("error: %v", err)
+	}
+	for i, entry := range apps.Entries {
+		ii, _ := strconv.Atoi(recno)
+		if i == ii {
+			sa = entry.User
+			sb = entry.Password
+			break
+		}
+	}
 	//------------------------------------------------------------------------
 	xdata = xdata + "  <A HREF='http://" + xip + ":8080'> [ Return to Start Page ] </A>  "
 	xdata = xdata + "<BR><BR>"
-	xdata = xdata + "Applications"
-	s := ""
-	sa := ""
-	sb := ""
-	//------------------------------------------------------------------------
-	xdata = xdata + "<BR>"
-	xdata = xdata + "<form action='/updatetag?recno=" + recno + "' method='post'>"
-	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + s + "</textarea>"
-	xdata = xdata + "<BR><BR>"
-	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + sa + "</textarea>"
-	xdata = xdata + "<BR><BR>"
-	xdata = xdata + "<textarea id='app' name='app' rows='1' cols='20'>" + sb + "</textarea>"
 
+	//------------------------------------------------------------------------
+
+	xdata = xdata + "<form action='/updateapp?recno=" + recno + "' method='post'>"
+	xdata = xdata + "Application :<textarea id='app' name='app' rows='1' cols='20'>" + sa + "</textarea>"
+	xdata = xdata + "<BR><BR>"
+	xdata = xdata + "Password :<textarea id='password' name='password' rows='1' cols='20'>" + sb + "</textarea>"
+	xdata = xdata + "<BR><BR>"
 	xdata = xdata + "<input type='submit' value='Upadte Application'/>"
 	xdata = xdata + "</form>"
 	xdata = xdata + "<BR><BR>"
 	xdata = xdata + "<BR>"
 
 	return xdata
+}
+
+func UpdateTable(tt string, recno string, app string, password string) {
+	data, err := os.ReadFile(tt)
+	if err != nil {
+		log.Fatalf("Error reading file: %v", err)
+	}
+
+	// Wrap the XML to allow unmarshalling multiple <Application> entries
+	wrapped := "<Applications>" + string(data) + "</Applications>"
+
+	var apps Applications
+	err = xml.Unmarshal([]byte(wrapped), &apps)
+	if err != nil {
+		log.Fatalf("Error unmarshalling XML: %v", err)
+	}
+
+	// Update the specified record
+	index, err := strconv.Atoi(recno)
+	if err != nil || index < 0 || index >= len(apps.Entries) {
+		log.Fatalf("Invalid record number: %v", recno)
+	}
+	apps.Entries[index].User = app
+	apps.Entries[index].Password = password
+
+	// Marshal back to XML
+	output, err := xml.MarshalIndent(apps.Entries, "", "  ")
+	if err != nil {
+		log.Fatalf("Error marshalling XML: %v", err)
+	}
+
+	// Write back to file (without <Applications> wrapper)
+	err = os.WriteFile(tt, output, 0644)
+	if err != nil {
+		log.Fatalf("Error writing file: %v", err)
+	}
 }
