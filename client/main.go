@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"strings"
 
@@ -13,8 +16,14 @@ import (
 
 func main() {
 	a := app.New()
-	//url := "https://forecast.weather.gov/MapClick.php?lat=41.25&lon=-81.44&unit=0&lg=english&FcstType=dwml"
+	url := "http://192.168.1.105:8080"
+	//url := "http://com1software.com"
+	app := "Goplex Client"
+	password := "test"
 	w := a.NewWindow("Goplex Client")
+	fmt.Println("Starting " + app + url + password)
+	res := ReadURL(url)
+	fmt.Println("Result: " + res)
 	//	fd := ""
 	//	content := widget.NewLabel(fd)
 	//	scrollableContent := container.NewVScroll(content)
@@ -48,4 +57,28 @@ func wordWrap(s string) string {
 	}
 	fmt.Println(xdata)
 	return strings.TrimSpace(xdata)
+}
+
+func ReadURL(url string) string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Println("Error fetching URL:", err)
+
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Error: Received non-OK HTTP status code: %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+
+	// Read the entire response body into a byte slice
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading response body: %v\n", err)
+		os.Exit(1)
+	}
+	// Convert byte slice to string
+	bodyString := string(bodyBytes)
+	return bodyString
 }
