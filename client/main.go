@@ -18,8 +18,9 @@ func main() {
 	a := app.New()
 	url := "http://192.168.1.105:8080"
 	//url := "http://com1software.com"
-	app := "Goplex Client"
-	password := "test"
+	app := "test"
+	password := "admin"
+	url = url + "/lookupapp?password=" + password + "&app=" + app
 	w := a.NewWindow("Goplex Client")
 	fmt.Println("Starting " + app + url + password)
 	res := ReadURL(url)
