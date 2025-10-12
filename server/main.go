@@ -81,6 +81,16 @@ func main() {
 
 		})
 
+		//------------------------------------------------ Look Up App Handler
+		http.HandleFunc("/lookupapp", func(w http.ResponseWriter, r *http.Request) {
+			app := r.FormValue("app")
+			password := r.FormValue("password")
+			fmt.Printf("App : %s Password : %s\n", app, password)
+			xdata := DisplayPage(xip, port, tt)
+			fmt.Fprint(w, xdata)
+
+		})
+
 		//------------------------------------------------- Start Server
 		TableCheck(tt)
 		Openbrowser(xip + ":" + port)
